@@ -249,8 +249,12 @@ class MicrocodeAssembler(object):
         # Internal state.
         self.fname = '?'
         self.lnum = 0
+        self.lindex = 0
+        self.linebuf = ''
+        self.source = ()
         self.maxuaddr = 0
         self.uprograms = 0
+        self.microcode_pass = 0; 
 
 
     def ansi(self, s):
@@ -320,43 +324,54 @@ class MicrocodeAssembler(object):
         return uinstr
 
 
-    def handle_label(self, line):
-        # Is there a label?
-        if ':' in line:
-            label, line = line.split(':', 1)
-            if self.args.verbose:
-                self.pansi('\033[0;1;35m%s\033[0m' % label)
-        return line
-
-
-    def getstatement(self, source):
-        """Read the source file, yielding complete statements."""
-        buf = ''
+    def start_statement_reading(self, source):
+        self.linebuf = ''
         self.lnum = 0
-        for line in source:
-            #print('***', self.lnum, line.rstrip())
-            self.lnum += 1
-            if not line:
-                yield ''
+        self.lindex = 0
+        self.source = source
+
+    def mark_current_statement(self):
+        self.mark_lindex = self.lindex
+        self.mark_lnum = self.lnum
+        self.mark_linebuf = self.prev_linebuf
+
+    def restart_marked_statement(self):
+        self.lindex = self.mark_lindex
+        self.lnum = self.mark_lnum
+        self.linebuf = self.mark_linebuf
+
+    def getstatement(self):
+        """Read the source file, returning complete statements."""
+        while True:
+            if ';' in self.linebuf:
+                self.prev_linebuf = self.linebuf
+                x = self.linebuf.split(';', 1)
+                self.linebuf = x[1].strip()
+                return x[0].strip()
+            elif self.linebuf:
+                self.prev_linebuf = self.linebuf;
+                self.linebuf = ''
+                return self.prev_linebuf
+
+            elif self.lindex < len(self.source):
+                line = self.source[self.lindex]
+                #print('***', self.lnum, line.rstrip())
+                self.lnum += 1
+                self.lindex += 1
+                if not line:
+                    return ''
+
+                # Parse line number magic comments from cpp.
+                x = re.findall('^# (\d+) ".+"$', line.strip())
+                if x:
+                    self.lnum = int(x[0], 10) - 1
+
+                line = self.re_comment.sub('', line)
+                line = line.strip()
+
+                self.linebuf += ' ' + line
                 continue
-
-            # Parse line number magic comments from cpp.
-            x = re.findall('^# (\d+) ".+"$', line.strip())
-            if x:
-                self.lnum = int(x[0])
-
-            line = self.re_comment.sub('', line)
-            line = line.strip()
-
-            buf += ' ' + line
-            while ';' in buf:
-                x = buf.split(';', 1)
-                yield x[0].strip()
-                buf = x[1].strip()
-
-        if buf:
-            yield buf
-
+            return 0
 
     def process(self, fname, outfname):
         self.fname = fname
@@ -368,6 +383,7 @@ class MicrocodeAssembler(object):
         self.microcode = dict()
         self.condspecs = []
         self.fields = list()
+        self.address_field = None
 
         uaddr = 0
         state = 0
@@ -396,7 +412,17 @@ class MicrocodeAssembler(object):
             sys.stdout.write(source)
             sys.exit(0)
 
-        for line in self.getstatement(source.split('\n')):
+        self.start_statement_reading(source.splitlines())
+        while True:
+            line = self.getstatement()
+            #end of file check
+            if line == 0:
+                #we should do the second pass of the last start
+                if self.microcode_pass == 1:
+                    line = 'start'
+                else:
+                    break
+            line = line.strip()
             # Skip empty lines.
             if not line:
                 continue
@@ -437,8 +463,10 @@ class MicrocodeAssembler(object):
                     shift = 0
                     while ((fieldbits >> shift) & 1) == 0:
                         shift +=1
-
-                    self.fields.append((fieldname, fieldbits, shift, fieldbits >> shift))
+                    field = (fieldname, fieldbits, shift, fieldbits >> shift)
+                    self.fields.append(field)
+                    if fieldname == 'address':
+                        self.address_field = field
                 except:
                     self.error('Bit field should be a binary number (. or - are aliases of 0 for readability)')
 
@@ -466,85 +494,115 @@ class MicrocodeAssembler(object):
                     self.pansi('# signal', signame, self.proper_bin(sigbits, 1))
 
             elif line.startswith('start'):
-                condre = '(\w+)\s*=\s*([01xX]+)'
-                if not re.match('^start\s+' + condre + '(\s*,\s*' + condre + ')*\s*$', line):
-                    print(line)
-                    self.error('Syntax error parsing "start" directive.')
-                if 'uaddr' not in self.conds:
-                    self.error("The mandatory conditional 'uaddr' has not been defined.")
-                #self.pansi("Starting new microprogram.")
-                self.uprograms += 1
-                self.condspecs = re.findall(condre, line)
-                if not self.condspecs:
-                    self.error('No conditions specified')
-                uinstr = self.idleinstr()
+                if self.microcode_pass == 2:
+                    self.microcode_pass = 0                    
+                if self.microcode_pass == 0:   
+                    self.mark_current_statement();
+                    self.microcode_pass = 1
+                elif self.microcode_pass == 1:
+                    self.restart_marked_statement()
+                    self.microcode_pass = 2
+                    line = self.getstatement();
+
+                if self.microcode_pass > 1:
+                    self.totalsigs = max(len(bin(x)) for x in self.signals.values()) - 2
+                    condre = '(\w+)\s*=\s*([01xX]+)'
+                    if not re.match('^start\s+' + condre + '(\s*,\s*' + condre + ')*\s*$', line):
+                        print(line)
+                        self.error('Syntax error parsing "start" directive.')
+                    if 'uaddr' not in self.conds:
+                        self.error("The mandatory conditional 'uaddr' has not been defined.")
+                    #self.pansi("Starting new microprogram.")
+                    self.uprograms += 1
+                    self.condspecs = re.findall(condre, line)
+                    if not self.condspecs:
+                        self.error('No conditions specified')
+                    uinstr = self.idleinstr()
+
+                    if self.args.verbose:
+                        print()
+
                 uaddr = 0
                 state = 1
-                if self.args.verbose:
-                    print()
 
             else:
+                line_to_list = line
+                if ':' in line:
+                    label, line = line.split(':',1)
+                    if self.microcode_pass == 1:
+                        addr_field = self.address_field;
+                        if addr_field:
+                            bits = addr_field[3]
+                            shift = addr_field[2]
+                            if uaddr > bits:
+                                self.error('the field "address" is too small to contain the label %s' %(label.strip().lower()))
+                            self.signals[label.strip().lower()] = uaddr << shift
+                            if self.args.mappings:
+                                self.pansi('# label', label.strip().lower(), self.proper_bin(uaddr << shift, 1))
+                    if not line:
+                        continue
                 if state == 0:
                     self.error("Microcode seen before first 'start' keyword.")
-                sigspec = [x.strip() for x in line.split(',')]
-                if 'hold' not in sigspec:
-                    uinstr = self.idleinstr()
-                else:
-                    sigspec = [x for x in sigspec if x != 'hold']
+                if self.microcode_pass == 2:
+                    sigspec = [x.strip() for x in line.split(',')]
+                    if 'hold' not in sigspec:
+                        uinstr = self.idleinstr()
+                    else:
+                        sigspec = [x for x in sigspec if x != 'hold']
 
-                for signal in sigspec:
-                    used_signals = used_signals | set([signal.lower()])
-                    enable = True
-                    if signal.startswith('-'):
-                        enable = False
-                        signal = signal[1:].strip()
+                    for signal in sigspec:
+                        used_signals = used_signals | set([signal.lower()])
+                        enable = True
+                        if signal.startswith('-'):
+                            enable = False
+                            signal = signal[1:].strip()
 
-                    # If it's an active-low signal, negate the semantics.
-                    if signal.startswith('/'):
-                        enable = not enable
-                        pass
+                        # If it's an active-low signal, negate the semantics.
+                        if signal.startswith('/'):
+                            enable = not enable
+                            pass
 
-                    try:
-                        if enable:
-                            uinstr |= self.signals[signal.lower()]
-                        else:
-                            uinstr &= ~self.signals[signal.lower()]
+                        try:
+                            if enable:
+                                uinstr |= self.signals[signal.lower()]
+                            else:
+                                uinstr &= ~self.signals[signal.lower()]
 
-                    except KeyError:
-                        self.error("Unknown signal name '%s'." % signal)
+                        except KeyError:
+                            self.error("Unknown signal name '%s'." % signal)
 
-                # Output the microcode line.
-                #self.pansi(condspecs + [('uaddr', bin(uaddr)[2:])], signals)
+                    # Output the microcode line.
+                    #self.pansi(condspecs + [('uaddr', bin(uaddr)[2:])], signals)
 
-                # Prepare for encoding.
-                d = dict()
+                    # Prepare for encoding.
+                    d = dict()
 
-                # Add the microaddress to the conditions.
-                self.condspecs.append(('uaddr', self.proper_bin(uaddr, self.condwidths['uaddr'])))
+                    # Add the microaddress to the conditions.
+                    self.condspecs.append(('uaddr', self.proper_bin(uaddr, self.condwidths['uaddr'])))
 
-                # Turn the conditions into a dictionary.
-                for sig, val in self.condspecs:
-                    d[sig] = val # self.proper_bin(val, self.condwidths[sig])
+                    # Turn the conditions into a dictionary.
+                    for sig, val in self.condspecs:
+                        d[sig] = val # self.proper_bin(val, self.condwidths[sig])
 
-                # Order the conditions using the order of conds
-                romaddr = list()
-                for c in self.conds:
-                    try:
-                        assert c in d
-                        if len(d[c]) != self.condwidths[c]:
-                            self.error("Condition '%s' should specify exactly %d bits, %d seen instead." % (c, self.condwidths[c], len(d[c])))
-                        romaddr.append(d[c])
-                    except (AssertionError, KeyError):
-                        self.error("Missing value for condition '%s'" % c)
-
-                # Print out the conditions.
-                if self.args.verbose:
+                    # Order the conditions using the order of conds
+                    romaddr = list()
                     for c in self.conds:
-                        self.wansi('%s:\033[1;32m%s\033[0m ' % (c, d[c]))
-                    self.pansi(': \033[1;33m%s\033[0m ; %s' % (bin(uinstr)[2:].zfill(self.UINSTR_LENGTH), line))
+                        try:
+                            assert c in d
+                            if len(d[c]) != self.condwidths[c]:
+                                self.error("Condition '%s' should specify exactly %d bits, %d seen instead." % (c, self.condwidths[c], len(d[c])))
+                            romaddr.append(d[c])
+                        except (AssertionError, KeyError):
+                            self.error("Missing value for condition '%s'" % c)
 
-                # Write to the ROM.
-                self.set_microcode(romaddr, uinstr, (' %-40s ' % ' '.join(sigspec)))
+                    # Print out the conditions.
+                    if self.args.verbose:
+                        for c in self.conds:
+                            self.wansi('%s:\033[1;32m%s\033[0m ' % (c, d[c]))
+                        self.pansi(': \033[1;33m%s\033[0m ; %s' % (self.proper_bin(uinstr, self.totalsigs), line_to_list.strip()))
+
+                    # Write to the ROM.
+                    self.set_microcode(romaddr, uinstr, (' %-40s ' % ' '.join(sigspec)))
 
                 uaddr += 1
                 self.maxuaddr = max(self.maxuaddr, uaddr)
@@ -593,6 +651,7 @@ class MicrocodeAssembler(object):
             self.writeroms_vhdl(outfname)
         if self.args.verilog:
             self.writeroms_verilog(outfname)
+            self.writerom_verilog(outfname)
             self.writeroms_verilog_code(outfname)
         if self.args.altera:
             self.writeroms_altera(outfname)
@@ -677,6 +736,21 @@ class MicrocodeAssembler(object):
                              addr))
             f.close()
 
+    def writerom_verilog(self, outfname):
+        """Write one binary file in Verilog binary
+        (human-readable binary, that is) format."""
+        fname = '%s.brg' % (outfname)
+        print("Writing %s..." % (fname))
+        f = open(fname, 'w')
+        s = self.romsize
+        d = self.totalconds
+        w = self.totalsigs
+        idle = self.idleinstr()
+        for addr in range(self.romsize):
+            data, pattern = self.microcode.get(addr, (idle, '------------'))
+            f.write('%s // addr=%s\n' % (self.proper_bin(data, w),self.proper_bin(addr, d)))
+        f.close()
+
 
     def writeroms_altera(self, outfname):
         """Write a binary file in Altera MIF format."""
@@ -760,7 +834,7 @@ class MicrocodeAssembler(object):
                     hist[data] = 1
             keys = list(hist.keys())
             keys.sort(key=lambda x: hist[x])
-            default = keys[0]
+            default = keys[-1]
 
             for addr in range(self.romsize):
                 data, pattern = self.microcode.get(addr, (idle, '------------'))
@@ -770,7 +844,7 @@ class MicrocodeAssembler(object):
                             (self.totalconds, self.proper_bin(addr, self.totalconds),
                              self.totalsigs, self.proper_bin(data, self.totalsigs)))
             f.write("            default: control_vector <= %d'b%s;\n" % \
-                        (self.totalsigs, self.proper_bin(data, self.totalsigs)))
+                        (self.totalsigs, self.proper_bin(default, self.totalsigs)))
             f.write('        endcase\n')
             f.write('    end\n')
 
