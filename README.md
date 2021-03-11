@@ -111,8 +111,11 @@ Conditionals are made up of letters, numbers, and non-whitespace characters
 except colons (`:`), semicolons (`;`) and equal signs (`=`).
 
 Labels can be added in the microprogram to assign values to the current 
-microprogram address (uaddr). They can be used as a signal if the special 
-signal field `address` has been defined. This is useful for branch instructions.  
+microprogram address (uaddr). They can be used in microprograms if the special 
+signal field `address` has been defined. This is useful for branch instructions.
+If multiple branching fields are needed, another field (like field1)can be defined 
+and a label (like label1) can be used to provide a value for it with the syntax 
+field1.label1
 
 Signal fields may be named for convenience. Macros to extract field values will
 be added to any C output generated (in future versions, more functionality will
@@ -130,7 +133,6 @@ corresponding bits are inverted when the ROM bitmap is written.
 Signal values may be one of:
 A value expressing a binary value (see minimum example above)
 A numerical value within a field, either in binary form: 0b1010 or hex form: 0xA
-A label
 A list of signal name and signal values separated by comma (`,`) 
 
 Microprograms are declared with the `start` keyword, followed by a
@@ -141,9 +143,9 @@ care value may be specified using the standard electronics don't care symbol,
 
 After the `start` keyword and condition specification, the microprogram
 follows. Each line of the microprogram defines a comma separated list of zero
-or more signal names as defined previously. The order of signals in each line
-does not matter. Lines are terminated with semicolons (so that, in practice,
-each may span multiple actual lines in the source code).
+or more signal names or label names as defined previously. The order of signals
+in each line does not matter. Lines are terminated with semicolons (so that, 
+in practice,each may span multiple actual lines in the source code).
 
 A special keyword used in some cases is `hold`. When encountered, it indicates
 that the set of signals active on the previous line should be active on the
