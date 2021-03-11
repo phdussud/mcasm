@@ -9,13 +9,14 @@ cond uaddr:3;
 */
 
 field NS              = XXX_______;  //-- Next State
-signal mem_addr_ini   = NS.0b001;
+signal mem_addr_ini   = NS.0b001;  //signal expressed as a field value. The value is checked for overflow of the field
 signal max_number_ini = NS.0b010;
 
 
 
-//special field address to allow specifying branching with labels.
+//default field address to allow specifying branching with labels without a field prefix.
 field address =   ___XXX____;  //-- Branch destination
+
 
 
 //--  TS - Test operations
@@ -32,7 +33,8 @@ signal Wr      = MS.0b1;      //-- Write to max
 field IS       = _________X;  //-- Addr Inc
 signal /Inc     = IS.0b1;      //-- Increment address
 
-
+//signal composed of other signals. It produce better listings than defining a C macro
+//that gets expanded before the listing is produced.
 signal jmp = NS.0b111, always
 signal jmp_if_mem_data_lt_max = NS.0b011, lt_max
 signal max_number_assign = NS.0b100, Wr
@@ -51,10 +53,10 @@ _start:
    mem_addr_ini;
    max_number_ini;
 _loop1:
-      jmp_if_mem_data_lt_max, address._next1;
+      jmp_if_mem_data_lt_max, address._next1; 
       max_number_assign;
 _next1:
-      jmp_if_mem_addr_eq_last, _Last;
+      jmp_if_mem_addr_eq_last, _Last; //labels can be specified without a field prefix if the field "address" is defined
       mem_addr_inc;
       jmp, _loop1
 

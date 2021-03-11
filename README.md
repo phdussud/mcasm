@@ -110,6 +110,16 @@ increased readability, you may also use the characters `.` or `-` for zero.
 Conditionals are made up of letters, numbers, and non-whitespace characters
 except colons (`:`), semicolons (`;`) and equal signs (`=`).
 
+Labels can be added in the microprogram to assign values to the current 
+microprogram address (uaddr). They can be used as a signal if the special 
+signal field `address` has been defined. This is useful for branch instructions.  
+
+Signal fields may be named for convenience. Macros to extract field values will
+be added to any C output generated (in future versions, more functionality will
+be attached to them). Field definitions may use `X`, `x` or `+` to specify a
+bit that's included in the field, and `.`, `_`, or `-` to specify bits that are
+excluded from the field.
+
 Signal names may contain any character except the equals sign (`=`). Notably,
 they may include spaces (for legibility). A signal may not start with a minus
 sign (`-`).
@@ -117,11 +127,11 @@ sign (`-`).
 Signals starting with a slash (`/`) are recognised as active-low signals. The
 corresponding bits are inverted when the ROM bitmap is written.
 
-Signal fields may be named for convenience. Macros to extract field values will
-be added to any C output generated (in future versions, more functionality will
-be attached to them). Field definitions may use `X`, `x` or `+` to specify a
-bit that's included in the field, and `.`, `_`, or `-` to specify bits that are
-excluded from the field.
+Signal values may be one of:
+A value expressing a binary value (see minimum example above)
+A numerical value within a field, either in binary form: 0b1010 or hex form: 0xA
+A label
+A list of signal name and signal values separated by comma (`,`) 
 
 Microprograms are declared with the `start` keyword, followed by a
 comma-separated set of conditionals and their values in the format
