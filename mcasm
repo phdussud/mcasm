@@ -405,12 +405,7 @@ class MicrocodeAssembler(object):
         label = label.strip()
         labelname = label.lower()
         if self.microcode_pass == 1:
-            addr_field = self.address_field;
-            if addr_field:
-                shift = addr_field[2]
-            else:
-                shift = 0
-            self.labels[labelname] = (uaddr, uaddr << shift)
+            self.labels[labelname] = uaddr
             if self.args.mappings:
                 self.pansi('# label', label, self.proper_bin(uaddr, 1))
         return line
@@ -432,7 +427,7 @@ class MicrocodeAssembler(object):
             else:
                 val = self.labels.get(value.strip(), None)
                 if val is not None:
-                    intvalue = val[0] #get the unshifted value
+                    intvalue = val #get the unshifted value
                 else:
                     self.error("Unknown label name or value format incorrect '%s'." % value)
 
@@ -452,7 +447,6 @@ class MicrocodeAssembler(object):
         self.conds = list()
         self.condwidths = dict()
         self.signals = dict()
-        self.labels = dict()
         self.microcode = dict()
         self.condspecs = []
         self.fields = dict()
@@ -652,13 +646,14 @@ class MicrocodeAssembler(object):
                             try:
                                 intvalues = self.signals.get(signal.lower(),None)
                                 if intvalues == None:
-                                    labelvalues = self.labels[signal.lower()]
-                                    intvalues = (labelvalues[1],0)
-                                    addr_field = self.address_field;
+                                    labelvalue = self.labels[signal.lower()]
+                                    addr_field = self.address_field
                                     if addr_field:
                                         bits = addr_field[3]
-                                        if labelvalues[0] > bits:
+                                        shift = addr_field[2]
+                                        if labelvalue > bits:
                                             self.error('the field "address" is too small to contain the label %s' %(signal))
+                                        intvalues = (labelvalue << shift,0)
                                     else:
                                         self.error('the field "address" has not been defined and is used implicitly by label %s' %(signal))
  
